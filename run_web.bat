@@ -1,0 +1,3 @@
+@echo off
+echo Lancement Al-Muqri sur Chrome (CORS desactive)...
+flutter run -d chrome --web-browser-flag "--disable-web-security" --web-browser-flag "--user-data-dir=%TEMP%\chrome_dev"
