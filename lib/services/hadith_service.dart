@@ -4,23 +4,38 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 /// Service hadiths — utilise l'API fawazahmed0 (GitHub Raw, CORS ouvert).
-/// Bukhari en français : jusqu'à 7563 hadiths répartis en 97 chapitres.
+/// Deux recueils disponibles : Sahih Bukhari et Sahih Muslim, en français.
 class HadithService {
-  static const _base =
+  static const String _baseBukhari =
       'https://raw.githubusercontent.com/fawazahmed0/hadith-api/1/editions/fra-bukhari';
+  static const String _baseMuslim =
+      'https://raw.githubusercontent.com/fawazahmed0/hadith-api/1/editions/fra-muslim';
 
-  // Chapitres disponibles (1 à 97 pour Bukhari)
-  static const int _totalBooks = 97;
+  static const int _bukhariBooks = 97;
+  static const int _muslimBooks = 56;
 
-  // Cache simple en mémoire
-  static final Map<int, List<Map<String, dynamic>>> _cache = {};
+  static final Map<String, Map<int, List<Map<String, dynamic>>>> _cache = {
+    'bukhari': {},
+    'muslim': {},
+  };
 
-  /// Charge les hadiths d'un chapitre donné.
-  static Future<List<Map<String, dynamic>>> fetchChapter(int book) async {
-    if (_cache.containsKey(book)) return _cache[book]!;
+  static String _baseFor(String collection) =>
+      collection == 'muslim' ? _baseMuslim : _baseBukhari;
+
+  static int _totalBooksFor(String collection) =>
+      collection == 'muslim' ? _muslimBooks : _bukhariBooks;
+
+  static String _labelFor(String collection) =>
+      collection == 'muslim' ? 'Sahih Muslim' : 'Sahih Bukhari';
+
+  static Future<List<Map<String, dynamic>>> fetchChapter(int book,
+      {String collection = 'bukhari'}) async {
+    final cache = _cache[collection]!;
+    if (cache.containsKey(book)) return cache[book]!;
     try {
+      final base = _baseFor(collection);
       final resp = await http.get(
-        Uri.parse('$_base/$book.json'),
+        Uri.parse('$base/$book.json'),
         headers: {'User-Agent': 'ApprendreCoran/1.0'},
       ).timeout(const Duration(seconds: 15));
       if (resp.statusCode != 200) return [];
@@ -30,9 +45,11 @@ class HadithService {
                 'number': h['hadithnumber'],
                 'text': h['text'] as String,
                 'book': book,
+                'collection': collection,
+                'collectionLabel': _labelFor(collection),
               })
           .toList();
-      _cache[book] = hadiths;
+      cache[book] = hadiths;
       return hadiths;
     } catch (e) {
       debugPrint('HadithService error: $e');
@@ -40,12 +57,18 @@ class HadithService {
     }
   }
 
-  /// Retourne un hadith aléatoire (choisit un chapitre aléatoire puis un hadith dedans).
-  static Future<Map<String, dynamic>?> randomHadith() async {
+  static Future<Map<String, dynamic>?> randomHadith(
+      {String collection = 'both'}) async {
     final rand = Random();
-    final book = rand.nextInt(_totalBooks) + 1;
-    final hadiths = await fetchChapter(book);
+    final chosen = collection == 'both'
+        ? (rand.nextBool() ? 'bukhari' : 'muslim')
+        : collection;
+    final book = rand.nextInt(_totalBooksFor(chosen)) + 1;
+    final hadiths = await fetchChapter(book, collection: chosen);
     if (hadiths.isEmpty) return null;
     return hadiths[rand.nextInt(hadiths.length)];
   }
+
+  static int totalBooks(String collection) => _totalBooksFor(collection);
+  static String label(String collection) => _labelFor(collection);
 }

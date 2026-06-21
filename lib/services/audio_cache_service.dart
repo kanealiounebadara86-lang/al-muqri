@@ -11,8 +11,8 @@ class AudioCacheService {
 
   static Future<String?> getCacheDir() async {
     if (kIsWeb) return null;
-    _cacheDir ??=
-        (await getApplicationDocumentsDirectory()).path + '/audio_cache';
+    final docsDir = await getApplicationDocumentsDirectory();
+    _cacheDir ??= '${docsDir.path}/audio_cache';
     await Directory(_cacheDir!).create(recursive: true);
     return _cacheDir;
   }
@@ -25,8 +25,7 @@ class AudioCacheService {
     try {
       final dir = await getCacheDir();
       if (dir == null) return url;
-      // Nom de fichier unique basé sur l'URL
-      final filename = Uri.parse(url).pathSegments.last;
+      // Nom de fichier unique basé sur l'URL (segments de chemin)
       final surahPart =
           Uri.parse(url).pathSegments.where((s) => s.isNotEmpty).join('_');
       final safeName = surahPart.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');

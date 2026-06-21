@@ -2,50 +2,58 @@ class AdhanInfo {
   final String id;
   final String name;
   final String nameAr;
-  final String assetPath; // assets/audio/xxx.mp3 (à placer dans le projet)
-  final String fallbackUrl; // URL de secours si l'asset n'existe pas encore
+  final String assetPath;
+  final List<String> urls; // plusieurs URLs de secours, testées dans l'ordre
   const AdhanInfo(
       {required this.id,
       required this.name,
       required this.nameAr,
       required this.assetPath,
-      required this.fallbackUrl});
+      required this.urls});
 }
 
 const List<AdhanInfo> kAdhans = [
   AdhanInfo(
       id: 'makkah',
-      name: 'Adhan de La Mecque',
-      nameAr: 'أذان مكة المكرمة',
+      name: 'Adhan (Mishary Alafasy)',
+      nameAr: 'أذان مشاري العفاسي',
       assetPath: 'assets/audio/adhan_makkah.mp3',
-      fallbackUrl: 'https://download.quranicaudio.com/adhans/Makkah.mp3'),
+      urls: [
+        'https://cdn.aladhan.com/audio/adhans/a9.mp3',
+        'https://cdn.aladhan.com/audio/adhans/a4.mp3',
+      ]),
   AdhanInfo(
       id: 'madinah',
-      name: 'Adhan de Médine',
-      nameAr: 'أذان المدينة المنورة',
+      name: 'Adhan (Ahmad al-Nafees)',
+      nameAr: 'أذان أحمد النفيس',
       assetPath: 'assets/audio/adhan_madinah.mp3',
-      fallbackUrl: 'https://download.quranicaudio.com/adhans/Madinah.mp3'),
-  AdhanInfo(
-      id: 'egypt',
-      name: 'Adhan Égyptien',
-      nameAr: 'أذان مصري',
-      assetPath: 'assets/audio/adhan_egypt.mp3',
-      fallbackUrl: 'https://download.quranicaudio.com/adhans/Cairo.mp3'),
+      urls: [
+        'https://cdn.aladhan.com/audio/adhans/a1.mp3',
+      ]),
   AdhanInfo(
       id: 'turkey',
-      name: 'Adhan Turc',
+      name: 'Adhan Turc (Mustafa Özcan)',
       nameAr: 'الأذان التركي',
-      assetPath: 'assets/audio/adhan_turkey.mp3',
-      fallbackUrl: 'https://download.quranicaudio.com/adhans/Turkey.mp3'),
+      assetPath: 'assets/audio/adhan_egypt.mp3',
+      urls: [
+        'https://cdn.aladhan.com/audio/adhans/a2.mp3',
+      ]),
+  AdhanInfo(
+      id: 'zahrani',
+      name: 'Adhan (Mansour Al-Zahrani)',
+      nameAr: 'أذان منصور الزهراني',
+      assetPath: 'assets/audio/adhan_zahrani.mp3',
+      urls: [
+        'https://cdn.aladhan.com/audio/adhans/a11-mansour-al-zahrani.mp3',
+      ]),
 ];
 
 const List<AdhanInfo> kIqamahs = [
   AdhanInfo(
-      id: 'iqamah1',
-      name: 'Iqama classique',
-      nameAr: 'إقامة الصلاة',
-      assetPath: 'assets/audio/iqamah.mp3',
-      fallbackUrl: 'https://download.quranicaudio.com/adhans/Iqamah.mp3'),
+    id: 'iqamah1', name: 'Iqama classique', nameAr: 'إقامة الصلاة',
+    assetPath: 'assets/audio/iqamah.mp3',
+    urls: [], // pas de source en ligne fiable trouvée — fichier local uniquement
+  ),
 ];
 
 const String kAdhanTextAr = 'اللَّهُ أَكْبَرُ اللَّهُ أَكْبَرُ\n'

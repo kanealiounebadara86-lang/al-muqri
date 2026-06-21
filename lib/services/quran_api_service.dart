@@ -114,6 +114,25 @@ class QuranApiService {
     return 'https://everyayah.com/data/${_everyayahCode(reciterId)}/$s$a.mp3';
   }
 
+  // URL tertiaire (mp3quran.net, par sourate uniquement — fallback ultime
+  // pour Sudais/Shuraim si les deux sources précédentes échouent)
+  String? getMp3QuranFallback(int surahNumber, String reciterId) {
+    const codes = {'sudais': 'sds', 'shuraim': 'shur'};
+    final code = codes[reciterId];
+    if (code == null) return null;
+    final s = surahNumber.toString().padLeft(3, '0');
+    return 'https://server11.mp3quran.net/$code/$s.mp3';
+  }
+
+  // ── Proxy CORS (uniquement pour test Web sur Chrome en développement) ──
+  // Certains CDN audio bloquent les requêtes cross-origin venant de
+  // localhost. Ce proxy public relaie la requête en ajoutant les headers
+  // CORS nécessaires. À utiliser uniquement en dev — pas fiable en
+  // production (rate-limit, disponibilité non garantie).
+  String wrapWithCorsProxy(String url) {
+    return 'https://corsproxy.io/?url=${Uri.encodeComponent(url)}';
+  }
+
   // Liste complète d'une sourate pour lecture continue
   List<String> getSurahAudioUrls(int surahNumber, String reciterId) {
     final surah = kSurahsData.firstWhere((s) => s['number'] == surahNumber);

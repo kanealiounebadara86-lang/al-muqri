@@ -3,8 +3,7 @@ import 'package:flutter/services.dart';
 import '../services/hadith_service.dart';
 import '../theme/app_theme.dart';
 
-/// Écran Hadiths — charge depuis l'API fawazahmed0 (Bukhari en français).
-/// Navigation par chapitre + hadith aléatoire.
+/// Écran Hadiths — Sahih Bukhari et Sahih Muslim, en français.
 class HadithScreen extends StatefulWidget {
   const HadithScreen({super.key});
   @override
@@ -12,6 +11,7 @@ class HadithScreen extends StatefulWidget {
 }
 
 class _HadithScreenState extends State<HadithScreen> {
+  String _collection = 'bukhari';
   int _book = 1;
   List<Map<String, dynamic>> _hadiths = [];
   bool _loading = true;
@@ -31,7 +31,8 @@ class _HadithScreenState extends State<HadithScreen> {
       _error = null;
     });
     try {
-      final list = await HadithService.fetchChapter(_book);
+      final list =
+          await HadithService.fetchChapter(_book, collection: _collection);
       if (mounted)
         setState(() {
           _hadiths = list;
@@ -47,12 +48,20 @@ class _HadithScreenState extends State<HadithScreen> {
     }
   }
 
+  void _switchCollection(String collection) {
+    setState(() {
+      _collection = collection;
+      _book = 1;
+    });
+    _load();
+  }
+
   Future<void> _random() async {
     setState(() {
       _loading = true;
       _error = null;
     });
-    final h = await HadithService.randomHadith();
+    final h = await HadithService.randomHadith(collection: _collection);
     if (!mounted) return;
     if (h == null) {
       setState(() {
@@ -78,6 +87,9 @@ class _HadithScreenState extends State<HadithScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final totalBooks = HadithService.totalBooks(_collection);
+    final label = HadithService.label(_collection);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Hadiths'),
@@ -89,7 +101,23 @@ class _HadithScreenState extends State<HadithScreen> {
         ],
       ),
       body: Column(children: [
-        // ── Sélecteur de livre ───────────────────────────────────────────
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+          color: AppTheme.surfaceVariant,
+          child: Row(children: [
+            Expanded(
+                child: _CollectionTab(
+                    label: 'Sahih Bukhari',
+                    selected: _collection == 'bukhari',
+                    onTap: () => _switchCollection('bukhari'))),
+            const SizedBox(width: 8),
+            Expanded(
+                child: _CollectionTab(
+                    label: 'Sahih Muslim',
+                    selected: _collection == 'muslim',
+                    onTap: () => _switchCollection('muslim'))),
+          ]),
+        ),
         Container(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
           color: AppTheme.surfaceVariant,
@@ -103,10 +131,10 @@ class _HadithScreenState extends State<HadithScreen> {
                 value: _book,
                 isDense: true,
                 items: List.generate(
-                    97,
+                    totalBooks,
                     (i) => DropdownMenuItem(
                         value: i + 1,
-                        child: Text('Sahih Bukhari — Livre ${i + 1}',
+                        child: Text('$label — Livre ${i + 1}',
                             style: const TextStyle(fontSize: 13)))),
                 onChanged: (v) {
                   if (v == null) return;
@@ -117,8 +145,6 @@ class _HadithScreenState extends State<HadithScreen> {
             )),
           ]),
         ),
-
-        // ── Contenu ──────────────────────────────────────────────────────
         Expanded(
             child: _loading
                 ? const Center(
@@ -129,8 +155,6 @@ class _HadithScreenState extends State<HadithScreen> {
                         ? const Center(
                             child: Text('Aucun hadith pour ce livre.'))
                         : _buildList()),
-
-        // ── Pagination ───────────────────────────────────────────────────
         if (!_loading && _error == null && _totalPages > 1)
           Container(
             padding: const EdgeInsets.symmetric(vertical: 8),
@@ -156,17 +180,12 @@ class _HadithScreenState extends State<HadithScreen> {
     );
   }
 
-  Widget _buildList() {
-    return ListView.separated(
-      padding: const EdgeInsets.all(16),
-      itemCount: _paged.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 10),
-      itemBuilder: (context, i) {
-        final h = _paged[i];
-        return _HadithCard(hadith: h);
-      },
-    );
-  }
+  Widget _buildList() => ListView.separated(
+        padding: const EdgeInsets.all(16),
+        itemCount: _paged.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 10),
+        itemBuilder: (context, i) => _HadithCard(hadith: _paged[i]),
+      );
 
   Widget _buildError() => Center(
           child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
@@ -183,6 +202,31 @@ class _HadithScreenState extends State<HadithScreen> {
       ]));
 }
 
+class _CollectionTab extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _CollectionTab(
+      {required this.label, required this.selected, required this.onTap});
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+              color: selected ? AppTheme.primary : AppTheme.surface,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                  color: selected ? AppTheme.primary : AppTheme.border)),
+          child: Text(label,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                  color: selected ? Colors.white : AppTheme.textSecondary))));
+}
+
 class _HadithCard extends StatelessWidget {
   final Map<String, dynamic> hadith;
   const _HadithCard({required this.hadith});
@@ -192,6 +236,8 @@ class _HadithCard extends StatelessWidget {
     final text = hadith['text'] as String? ?? '';
     final number = hadith['number'];
     final book = hadith['book'];
+    final collectionLabel =
+        hadith['collectionLabel'] as String? ?? 'Sahih Bukhari';
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -200,14 +246,13 @@ class _HadithCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: AppTheme.border)),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // En-tête : numéro + copier
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
                   color: AppTheme.primarySurface,
                   borderRadius: BorderRadius.circular(20)),
-              child: Text('Livre $book  •  N°$number',
+              child: Text('$collectionLabel — Livre $book  •  N°$number',
                   style: const TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
@@ -215,7 +260,8 @@ class _HadithCard extends StatelessWidget {
           GestureDetector(
               onTap: () async {
                 await Clipboard.setData(ClipboardData(
-                    text: '$text\n\n[Sahih Bukhari, Livre $book, N°$number]'));
+                    text:
+                        '$text\n\n[$collectionLabel, Livre $book, N°$number]'));
                 if (context.mounted)
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                       content: Text('Hadith copié'),
@@ -226,7 +272,6 @@ class _HadithCard extends StatelessWidget {
                   size: 16, color: AppTheme.textSecondary)),
         ]),
         const SizedBox(height: 12),
-        // Texte du hadith
         Text(text,
             style: const TextStyle(
                 fontSize: 14, height: 1.7, color: AppTheme.textPrimary)),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import '../data/adhan_data.dart';
+import '../services/audio_cache_service.dart';
 import '../theme/app_theme.dart';
 
 class AdhanScreen extends StatefulWidget {
@@ -10,7 +11,7 @@ class AdhanScreen extends StatefulWidget {
 }
 
 class _AdhanScreenState extends State<AdhanScreen> {
-  final AudioPlayer _player = AudioPlayer();
+  AudioPlayer? _player;
   String? _playingId;
   bool _isPlaying = false;
   bool _isLoading = false;
@@ -18,25 +19,33 @@ class _AdhanScreenState extends State<AdhanScreen> {
 
   @override
   void dispose() {
-    _player.dispose();
+    _player?.dispose();
     super.dispose();
   }
 
   Future<void> _play(AdhanInfo item) async {
-    // Pause si même audio
-    if (_playingId == item.id && _isPlaying) {
-      await _player.pause();
-      if (mounted) setState(() => _isPlaying = false);
+    // Pause/reprise si c'est déjà le même audio en cours
+    if (_playingId == item.id && _player != null) {
+      if (_isPlaying) {
+        await _player!.pause();
+        if (mounted) setState(() => _isPlaying = false);
+      } else {
+        await _player!.play();
+        if (mounted) setState(() => _isPlaying = true);
+      }
       return;
     }
-    // Reprendre si même audio en pause
-    if (_playingId == item.id && !_isPlaying) {
-      await _player.play();
-      if (mounted) setState(() => _isPlaying = true);
-      return;
-    }
-    // Nouvel audio — essayer asset d'abord, URL en fallback
-    await _player.stop();
+
+    // Nouvel audio : détruire l'ancien player et en créer un neuf
+    // (évite l'erreur "Platform player already exists" sur Web)
+    try {
+      await _player?.stop();
+    } catch (_) {}
+    try {
+      await _player?.dispose();
+    } catch (_) {}
+    _player = AudioPlayer();
+
     if (mounted)
       setState(() {
         _playingId = item.id;
@@ -45,21 +54,38 @@ class _AdhanScreenState extends State<AdhanScreen> {
       });
 
     bool loaded = false;
-    // 1. Essayer l'asset local
-    try {
-      await _player.setAsset(item.assetPath);
-      loaded = true;
-    } catch (_) {}
+    String? lastError;
 
-    // 2. Fallback URL si asset absent
+    // 1. Essayer l'asset local en premier (fonctionne hors ligne une fois
+    // les fichiers MP3 placés dans assets/audio/)
+    try {
+      await _player!.setAsset(item.assetPath);
+      loaded = true;
+    } catch (e) {
+      lastError = 'asset: $e';
+    }
+
+    // 2. Sinon, essayer chaque URL de la liste, avec cache automatique
     if (!loaded) {
-      try {
-        await _player.setUrl(item.fallbackUrl);
-        loaded = true;
-      } catch (_) {}
+      for (final url in item.urls) {
+        try {
+          final cachedPath = await AudioCacheService.getCachedOrDownload(url);
+          if (cachedPath != url && !cachedPath.startsWith('http')) {
+            await _player!.setFilePath(cachedPath);
+          } else {
+            await _player!.setUrl(url).timeout(const Duration(seconds: 10));
+          }
+          loaded = true;
+          break;
+        } catch (e) {
+          lastError = 'url $url: $e';
+          continue;
+        }
+      }
     }
 
     if (!loaded) {
+      debugPrint('AdhanScreen: échec chargement audio — $lastError');
       if (mounted) {
         setState(() {
           _isPlaying = false;
@@ -67,7 +93,8 @@ class _AdhanScreenState extends State<AdhanScreen> {
           _playingId = null;
         });
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Audio indisponible. Vérifiez votre connexion.'),
+            content:
+                Text('Audio indisponible. Vérifiez votre connexion internet.'),
             duration: Duration(seconds: 3)));
       }
       return;
@@ -78,8 +105,16 @@ class _AdhanScreenState extends State<AdhanScreen> {
         _isLoading = false;
         _isPlaying = true;
       });
-    await _player.play();
-    _player.playerStateStream.listen((state) {
+    try {
+      await _player!.play();
+    } catch (_) {
+      if (mounted)
+        setState(() {
+          _isPlaying = false;
+        });
+      return;
+    }
+    _player!.playerStateStream.listen((state) {
       if (state.processingState == ProcessingState.completed) {
         if (mounted)
           setState(() {
@@ -97,7 +132,6 @@ class _AdhanScreenState extends State<AdhanScreen> {
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          // Toggle Adhan / Iqama
           Container(
             padding: const EdgeInsets.all(4),
             decoration: BoxDecoration(
@@ -117,8 +151,6 @@ class _AdhanScreenState extends State<AdhanScreen> {
             ]),
           ),
           const SizedBox(height: 20),
-
-          // Liste audio
           ...list.map((item) {
             final isThis = _playingId == item.id;
             final loading = isThis && _isLoading;
@@ -177,10 +209,7 @@ class _AdhanScreenState extends State<AdhanScreen> {
               ]),
             );
           }),
-
           const SizedBox(height: 24),
-
-          // Texte Adhan ou Iqamah
           Text(_showAdhan ? "Texte de l'Adhan" : "Texte de l'Iqamah",
               style:
                   const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
@@ -208,20 +237,6 @@ class _AdhanScreenState extends State<AdhanScreen> {
                       color: AppTheme.textSecondary,
                       height: 1.8)),
             ]),
-          ),
-
-          const SizedBox(height: 16),
-          // Instruction pour les assets
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-                color: AppTheme.surfaceVariant,
-                borderRadius: BorderRadius.circular(10)),
-            child: const Text(
-                'Pour activer l\'audio : téléchargez les MP3 depuis download.quranicaudio.com/adhans/ '
-                'et placez-les dans assets/audio/ de votre projet Flutter.',
-                style: TextStyle(
-                    fontSize: 11, color: AppTheme.textSecondary, height: 1.5)),
           ),
         ]),
       ),

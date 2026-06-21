@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/providers.dart';
 import '../theme/app_theme.dart';
-import '../services/audio_cache_service.dart';
-import '../services/notification_service.dart';
 import '../data/reciters_data.dart';
 
 class SettingsScreen extends ConsumerWidget {

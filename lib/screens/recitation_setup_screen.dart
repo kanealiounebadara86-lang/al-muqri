@@ -5,7 +5,6 @@ import '../providers/providers.dart';
 import '../theme/app_theme.dart';
 import '../data/reciters_data.dart';
 import '../data/surahs_data.dart';
-import '../services/notification_service.dart';
 import 'package:go_router/go_router.dart';
 
 /// Écran de configuration — reproduit la mise en page Al-Muqri :

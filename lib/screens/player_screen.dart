@@ -2,14 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:just_audio/just_audio.dart' hide PlayerState;
 import '../models/models.dart';
 import '../models/hive_models.dart';
 import '../services/audio_service.dart';
+import '../services/audio_cache_service.dart';
 import '../providers/providers.dart';
 import '../theme/app_theme.dart';
 import '../data/surahs_data.dart';
 import '../widgets/tajwid_text.dart';
 import 'speech_to_text_screen.dart';
+import '../data/tafsir_wolof_data.dart';
 
 /// Lecteur principal — fidèle à Al-Muqri :
 /// gros bouton play rond, infos "Ayas : X à Y", sélecteurs de plage,
@@ -51,6 +54,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     });
     _audio.currentAyahStream.listen((i) {
       if (mounted) setState(() => _currentIdx = i - 1);
+    });
+    _audio.errorStream.listen((msg) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(msg, style: const TextStyle(fontSize: 12)),
+          duration: const Duration(seconds: 5),
+          behavior: SnackBarBehavior.floating));
     });
     _audio.progressStream.listen((p) {
       if (mounted) setState(() => _progress = p);
@@ -537,22 +547,53 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   // ── Bouton récitation — valeur ajoutée, fixé en bas ──────────────────
   Widget _voiceButton(List<Ayah> ayahs) {
+    final hasWolof = hasTafsirWolof(widget.surahNumber);
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
       decoration: const BoxDecoration(
           color: AppTheme.surface,
           border: Border(top: BorderSide(color: AppTheme.border))),
-      child: SizedBox(
-          width: double.infinity,
-          child: OutlinedButton.icon(
-              icon: const Icon(Icons.mic_rounded, size: 18),
-              label: const Text('Réciter ce verset à voix haute'),
-              style: OutlinedButton.styleFrom(
-                  foregroundColor: AppTheme.primary,
-                  side: const BorderSide(color: AppTheme.primary)),
-              onPressed: () => _openVoiceTest(
-                  ayahs[_currentIdx.clamp(_startAyah, _endAyah)]
-                      .numberInSurah))),
+      child: Column(children: [
+        SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+                icon: const Icon(Icons.mic_rounded, size: 18),
+                label: const Text('Réciter ce verset à voix haute'),
+                style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.primary,
+                    side: const BorderSide(color: AppTheme.primary)),
+                onPressed: () => _openVoiceTest(
+                    ayahs[_currentIdx.clamp(_startAyah, _endAyah)]
+                        .numberInSurah))),
+        if (hasWolof) ...[
+          const SizedBox(height: 8),
+          SizedBox(
+              width: double.infinity,
+              child: TextButton.icon(
+                  icon: const Icon(Icons.volume_up_rounded, size: 16),
+                  label: const Text('Tafsir audio en wolof (sourate entière)'),
+                  style: TextButton.styleFrom(
+                      foregroundColor: AppTheme.textSecondary),
+                  onPressed: _playWolofTafsir)),
+        ],
+      ]),
+    );
+  }
+
+  Future<void> _playWolofTafsir() async {
+    final url = tafsirWolofUrl(widget.surahNumber);
+    if (url == null) return;
+    // Attendre que l'arrêt soit complet avant d'ouvrir le panneau,
+    // sinon la récitation du Coran continue en parallèle du tafsir.
+    await _audio.stop();
+    if (!mounted) return;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) =>
+          _WolofTafsirSheet(url: url, surahNumber: widget.surahNumber),
     );
   }
 
@@ -577,6 +618,19 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       getFallbackUrl: (ayahInSurah, reciterId) => ref
           .read(quranApiProvider)
           .getEveryayahUrl(surahNum, ayahInSurah, reciterId),
+      getExtraFallbacks: (ayahInSurah, reciterId) {
+        // Pour Sudais/Shuraim, on ajoute un proxy CORS en dernier recours
+        // (utile uniquement pour le test sur Chrome — sur mobile natif
+        // les sources directes suffisent normalement).
+        if (reciterId != 'sudais' && reciterId != 'shuraim') return [];
+        final api = ref.read(quranApiProvider);
+        final direct = api.getAudioUrlBySurah(surahNum, ayahInSurah, reciterId);
+        final everyayah = api.getEveryayahUrl(surahNum, ayahInSurah, reciterId);
+        return [
+          api.wrapWithCorsProxy(direct),
+          api.wrapWithCorsProxy(everyayah),
+        ];
+      },
       startIndex: _currentIdx > _startAyah ? _currentIdx - _startAyah : 0,
     );
     final surah =
@@ -780,6 +834,156 @@ class _NavBtn extends StatelessWidget {
     return TextButton(
       onPressed: onTap,
       child: Row(children: reversed ? children.reversed.toList() : children),
+    );
+  }
+}
+
+/// Lecteur du tafsir audio wolof — s'ouvre en bas de l'écran,
+/// indépendant de la lecture verset par verset (audio par sourate entière).
+class _WolofTafsirSheet extends StatefulWidget {
+  final String url;
+  final int surahNumber;
+  const _WolofTafsirSheet({required this.url, required this.surahNumber});
+  @override
+  State<_WolofTafsirSheet> createState() => _WolofTafsirSheetState();
+}
+
+class _WolofTafsirSheetState extends State<_WolofTafsirSheet> {
+  late final AudioPlayer _player;
+  bool _isPlaying = false;
+  bool _isLoading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _player = AudioPlayer();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final cachedPath =
+          await AudioCacheService.getCachedOrDownload(widget.url);
+      if (cachedPath != widget.url && !cachedPath.startsWith('http')) {
+        await _player.setFilePath(cachedPath);
+      } else {
+        await _player.setUrl(widget.url).timeout(const Duration(seconds: 15));
+      }
+      if (mounted) setState(() => _isLoading = false);
+      await _player.play();
+      if (mounted) setState(() => _isPlaying = true);
+      _player.playerStateStream.listen((s) {
+        if (s.processingState == ProcessingState.completed && mounted) {
+          setState(() => _isPlaying = false);
+        }
+      });
+    } catch (e) {
+      if (mounted)
+        setState(() {
+          _isLoading = false;
+          _error = 'Audio indisponible (connexion requise)';
+        });
+    }
+  }
+
+  @override
+  void dispose() {
+    _player.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Container(
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+                color: AppTheme.border,
+                borderRadius: BorderRadius.circular(2))),
+        const SizedBox(height: 20),
+        const Icon(Icons.record_voice_over_rounded,
+            size: 36, color: AppTheme.primary),
+        const SizedBox(height: 12),
+        const Text('Tafsir en Wolof',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+        Text('Par Assane Sarr',
+            style:
+                const TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+        const SizedBox(height: 4),
+        const Text(
+            "L'enregistrement commence par un court extrait arabe\navant l'explication en wolof.",
+            textAlign: TextAlign.center,
+            style: TextStyle(
+                fontSize: 11, color: AppTheme.textSecondary, height: 1.4)),
+        const SizedBox(height: 20),
+        if (_isLoading)
+          const CircularProgressIndicator(color: AppTheme.primary)
+        else if (_error != null)
+          Text(_error!,
+              style:
+                  const TextStyle(color: AppTheme.textSecondary, fontSize: 13))
+        else ...[
+          GestureDetector(
+            onTap: () async {
+              if (_isPlaying) {
+                await _player.pause();
+              } else {
+                await _player.play();
+              }
+              setState(() => _isPlaying = !_isPlaying);
+            },
+            child: Container(
+                width: 64,
+                height: 64,
+                decoration: const BoxDecoration(
+                    color: AppTheme.primary, shape: BoxShape.circle),
+                child: Icon(
+                    _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                    color: Colors.white,
+                    size: 32)),
+          ),
+          const SizedBox(height: 16),
+          // ── Bouton "Passer l'intro arabe" + avance manuelle ──────────────
+          Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            TextButton.icon(
+                icon: const Icon(Icons.fast_forward_rounded, size: 18),
+                label: const Text('Passer l\'intro (+15s)'),
+                style: TextButton.styleFrom(foregroundColor: AppTheme.primary),
+                onPressed: () async {
+                  final pos = await _player.position;
+                  await _player.seek(pos + const Duration(seconds: 15));
+                }),
+          ]),
+          Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            TextButton.icon(
+                icon: const Icon(Icons.replay_10_rounded, size: 16),
+                label: const Text('-10s'),
+                style: TextButton.styleFrom(
+                    foregroundColor: AppTheme.textSecondary),
+                onPressed: () async {
+                  final pos = await _player.position;
+                  final newPos = pos - const Duration(seconds: 10);
+                  await _player
+                      .seek(newPos.isNegative ? Duration.zero : newPos);
+                }),
+            const SizedBox(width: 12),
+            TextButton.icon(
+                icon: const Icon(Icons.forward_10_rounded, size: 16),
+                label: const Text('+10s'),
+                style: TextButton.styleFrom(
+                    foregroundColor: AppTheme.textSecondary),
+                onPressed: () async {
+                  final pos = await _player.position;
+                  await _player.seek(pos + const Duration(seconds: 10));
+                }),
+          ]),
+        ],
+        const SizedBox(height: 16),
+      ]),
     );
   }
 }
